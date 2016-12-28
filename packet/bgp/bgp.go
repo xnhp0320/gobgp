@@ -127,6 +127,7 @@ const (
 	EC_SUBTYPE_MAC_MOBILITY ExtendedCommunityAttrSubType = 0x00 // EC_TYPE: 0x06
 	EC_SUBTYPE_ESI_LABEL    ExtendedCommunityAttrSubType = 0x01 // EC_TYPE: 0x06
 	EC_SUBTYPE_ES_IMPORT    ExtendedCommunityAttrSubType = 0x02 // EC_TYPE: 0x06
+	EC_SUBTYPE_ROUTER_MAC   ExtendedCommunityAttrSubType = 0x03 // EC_TYPE: 0x06
 
 	EC_SUBTYPE_UUID_BASED_RT ExtendedCommunityAttrSubType = 0x11
 )
@@ -5791,6 +5792,47 @@ func NewESImportRouteTarget(mac string) *ESImportRouteTarget {
 	}
 }
 
+type RouterMacExtended struct {
+	RouterMac net.HardwareAddr
+}
+
+func (e *RouterMacExtended) Serialize() ([]byte, error) {
+	buf := make([]byte, 8)
+	buf[0] = byte(EC_TYPE_EVPN)
+	buf[1] = byte(EC_SUBTYPE_ROUTER_MAC)
+	copy(buf[2:], e.RouterMac)
+	return buf, nil
+}
+
+func (e *RouterMacExtended) String() string {
+	buf := bytes.NewBuffer(make([]byte, 0, 32))
+	buf.WriteString(fmt.Sprintf("RouterMac: %s", e.RouterMac.String()))
+	return buf.String()
+}
+
+func (e *RouterMacExtended) MarshalJSON() ([]byte, error) {
+	t, s := e.GetTypes()
+	return json.Marshal(struct {
+		Type      ExtendedCommunityAttrType    `json:"type"`
+		Subtype   ExtendedCommunityAttrSubType `json:"subtype"`
+		RouterMac net.HardwareAddr             `json:"routermac"`
+	}{
+		Type:      t,
+		Subtype:   s,
+		RouterMac: e.RouterMac,
+	})
+}
+
+func (e *RouterMacExtended) GetTypes() (ExtendedCommunityAttrType, ExtendedCommunityAttrSubType) {
+	return EC_TYPE_EVPN, EC_SUBTYPE_ROUTER_MAC
+}
+
+func NewRouterMacExtend(MacAddr net.HardwareAddr) *RouterMacExtended {
+	return &RouterMacExtended{
+		RouterMac: MacAddr,
+	}
+}
+
 type MacMobilityExtended struct {
 	Sequence uint32
 	IsSticky bool
@@ -5872,6 +5914,11 @@ func parseEvpnExtended(data []byte) (ExtendedCommunityInterface, error) {
 			Sequence: seq,
 			IsSticky: isSticky,
 		}, nil
+	case EC_SUBTYPE_ROUTER_MAC:
+		return &RouterMacExtended{
+			RouterMac: net.HardwareAddr(data[2:8]),
+		}, nil
+
 	}
 	return nil, NewMessageError(BGP_ERROR_UPDATE_MESSAGE_ERROR, BGP_ERROR_SUB_MALFORMED_ATTRIBUTE_LIST, nil, fmt.Sprintf("unknown evpn subtype: %d", subType))
 }
@@ -7468,6 +7515,10 @@ func (e *ESImportRouteTarget) Flat() map[string]string {
 }
 
 func (e *MacMobilityExtended) Flat() map[string]string {
+	return map[string]string{}
+}
+
+func (e *RouterMacExtended) Flat() map[string]string {
 	return map[string]string{}
 }
 

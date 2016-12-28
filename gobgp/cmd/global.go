@@ -43,6 +43,7 @@ const (
 	RT
 	ENCAP
 	VALID
+	ROUTERMAC
 	NOT_FOUND
 	INVALID
 )
@@ -57,6 +58,7 @@ var ExtCommNameMap = map[ExtCommType]string{
 	RT:        "rt",
 	ENCAP:     "encap",
 	VALID:     "valid",
+	ROUTERMAC: "router-mac",
 	NOT_FOUND: "not-found",
 	INVALID:   "invalid",
 }
@@ -71,6 +73,7 @@ var ExtCommValueMap = map[string]ExtCommType{
 	ExtCommNameMap[RT]:        RT,
 	ExtCommNameMap[ENCAP]:     ENCAP,
 	ExtCommNameMap[VALID]:     VALID,
+	ExtCommNameMap[ROUTERMAC]: ROUTERMAC,
 	ExtCommNameMap[NOT_FOUND]: NOT_FOUND,
 	ExtCommNameMap[INVALID]:   INVALID,
 }
@@ -201,6 +204,18 @@ func encapParser(args []string) ([]bgp.ExtendedCommunityInterface, error) {
 	return []bgp.ExtendedCommunityInterface{o}, nil
 }
 
+func routermacParser(args []string) ([]bgp.ExtendedCommunityInterface, error) {
+	if len(args) < 1 {
+		return nil, fmt.Errorf("invalid router mac")
+	}
+	macaddr, err := net.ParseMAC(args[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid mac address %s", args[1])
+	}
+	o := bgp.NewRouterMacExtend(macaddr)
+	return []bgp.ExtendedCommunityInterface{o}, nil
+}
+
 func validationParser(args []string) ([]bgp.ExtendedCommunityInterface, error) {
 	if len(args) < 1 {
 		return nil, fmt.Errorf("invalid validation state")
@@ -233,6 +248,7 @@ var ExtCommParserMap = map[ExtCommType]func([]string) ([]bgp.ExtendedCommunityIn
 	RT:        rtParser,
 	ENCAP:     encapParser,
 	VALID:     validationParser,
+	ROUTERMAC: routermacParser,
 	NOT_FOUND: validationParser,
 	INVALID:   validationParser,
 }
@@ -346,14 +362,24 @@ func ParseEvpnMacAdvArgs(args []string) (bgp.AddrPrefixInterface, []string, erro
 	if err != nil {
 		return nil, nil, fmt.Errorf("invalid eTag: %s. err: %s", args[2], err)
 	}
-	label, err := strconv.Atoi(args[3])
-	if err != nil {
-		return nil, nil, fmt.Errorf("invalid label: %s. err: %s", args[3], err)
+
+	labels := make([]uint32, 0)
+	nextargs := 3
+	for i, v := range args[3:] {
+		if v == "rd" || i >= 2 {
+			break
+		}
+		label, err := strconv.Atoi(v)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid label: %s. err: %s", v, err)
+		}
+		nextargs++
+		labels = append(labels, uint32(label))
 	}
 
 	var rd bgp.RouteDistinguisherInterface
-	if args[4] == "rd" && len(args) > 5 {
-		rd, err = bgp.ParseRouteDistinguisher(args[5])
+	if args[nextargs] == "rd" && len(args) > nextargs+1 {
+		rd, err = bgp.ParseRouteDistinguisher(args[nextargs+1])
 		if err != nil {
 			return nil, nil, err
 		}
@@ -368,11 +394,11 @@ func ParseEvpnMacAdvArgs(args []string) (bgp.AddrPrefixInterface, []string, erro
 		MacAddress:       mac,
 		IPAddressLength:  uint8(iplen),
 		IPAddress:        ip,
-		Labels:           []uint32{uint32(label)},
+		Labels:           labels,
 		ETag:             uint32(eTag),
 	}
 	nlri = bgp.NewEVPNNLRI(bgp.EVPN_ROUTE_TYPE_MAC_IP_ADVERTISEMENT, 0, macIpAdv)
-	extcomms := args[6:]
+	extcomms := args[nextargs+2:]
 	return nlri, extcomms, nil
 }
 
@@ -906,10 +932,10 @@ usage: %s rib %s%%smatch <MATCH_EXPR> then <THEN_EXPR> -a %%s
 			etherTypes,
 		)
 		helpErrMap[bgp.RF_FS_L2_VPN] = fmt.Errorf(fsHelpMsgFmt, "l2vpn-flowspec", macFsMatchExpr)
-		helpErrMap[bgp.RF_EVPN] = fmt.Errorf(`usage: %s rib %s { macadv <MACADV> | multicast <MULTICAST> | prefix <PREFIX> } -a evpn
+		helpErrMap[bgp.RF_EVPN] = fmt.Errorf(`error %s usage: %s rib %s { macadv <MACADV> | multicast <MULTICAST> | prefix <PREFIX> } -a evpn
     <MACADV>    : <mac address> <ip address> <etag> <label> rd <rd> rt <rt>... [encap <encap type>]
     <MULTICAST> : <ip address> <etag> rd <rd> rt <rt>... [encap <encap type>]
-    <PREFIX>    : <ip prefix> [gw <gateway>] etag <etag> rd <rd> rt <rt>... [encap <encap type>]`, cmdstr, modtype)
+    <PREFIX>    : <ip prefix> [gw <gateway>] etag <etag> rd <rd> rt <rt>... [encap <encap type>]`, err, cmdstr, modtype)
 		helpErrMap[bgp.RF_OPAQUE] = fmt.Errorf(`usage: %s rib %s key <KEY> [value <VALUE>]`, cmdstr, modtype)
 		if err, ok := helpErrMap[rf]; ok {
 			return err
