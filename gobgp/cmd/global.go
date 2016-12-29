@@ -518,6 +518,42 @@ func ParseEvpnArgs(args []string) (bgp.AddrPrefixInterface, []string, error) {
 	return nil, nil, fmt.Errorf("invalid subtype. expect [macadv|multicast|prefix] but %s", subtype)
 }
 
+func parsePmsiTunnel(args []string) (bgp.PathAttributeInterface, error) {
+	if args[0] != "ingress-repl" {
+		return nil, fmt.Errorf("unsupported pmsi tunnel type %s", args[0])
+	}
+
+	label, err := strconv.Atoi(args[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid label id %s", args[1])
+	}
+
+	ip := net.ParseIP(args[2])
+	if ip == nil {
+		return nil, fmt.Errorf("invalid tunnel id (IP) %s", args[2])
+	}
+
+	tunnelID := &bgp.IngressReplTunnelID{
+		Value: ip,
+	}
+	o := bgp.NewPathAttributePmsiTunnel(bgp.PMSI_TUNNEL_TYPE_INGRESS_REPL, false, uint32(label), tunnelID)
+	return o, nil
+}
+
+func extractPmsiTunnel(args []string) ([]string, bgp.PathAttributeInterface, error) {
+	for idx, arg := range args {
+		if arg == "pmsi" && len(args) > (idx+3) {
+			tunnel, err := parsePmsiTunnel(args[idx+1:])
+			if err != nil {
+				return nil, nil, err
+			}
+			args = append(args[:idx], args[idx+2:]...)
+			return args, tunnel, nil
+		}
+	}
+	return args, nil, nil
+}
+
 func extractOrigin(args []string) ([]string, bgp.PathAttributeInterface, error) {
 	typ := bgp.BGP_ORIGIN_ATTR_TYPE_INCOMPLETE
 	for idx, arg := range args {
