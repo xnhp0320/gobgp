@@ -726,6 +726,7 @@ func ParsePath(rf bgp.RouteFamily, args []string) (*table.Path, error) {
 	attrs := table.PathAttrs(make([]bgp.PathAttributeInterface, 0, 1))
 
 	fns := []func([]string) ([]string, bgp.PathAttributeInterface, error){
+		extractPmsiTunnel,
 		extractOrigin,
 		extractMed,
 		extractLocalPref,
