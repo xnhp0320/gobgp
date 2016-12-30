@@ -5627,6 +5627,10 @@ func (e *OpaqueExtended) DecodeFromBytes(data []byte) error {
 			e.Value = &EncapExtended{
 				TunnelType: t,
 			}
+		case EC_SUBTYPE_DEFAULT_GATEWAY:
+			e.Value = &DefaultGatewayExtended{
+				DefGWMac: net.HardwareAddr(data[1:7]),
+			}
 		default:
 			e.Value = &DefaultOpaqueExtendedValue{
 				Value: data, //7byte
@@ -5692,6 +5696,21 @@ func NewOpaqueExtended(isTransitive bool) *OpaqueExtended {
 	return &OpaqueExtended{
 		IsTransitive: isTransitive,
 	}
+}
+
+type DefaultGatewayExtended struct {
+	DefGWMac net.HardwareAddr
+}
+
+func (e *DefaultGatewayExtended) Serialize() ([]byte, error) {
+	buf := make([]byte, 7)
+	buf[0] = byte(EC_SUBTYPE_DEFAULT_GATEWAY)
+	copy(buf[1:7], e.DefGWMac)
+	return buf, nil
+}
+
+func (e *DefaultGatewayExtended) String() string {
+	return fmt.Sprintf("Def GW:%s", e.DefGWMac.String())
 }
 
 type ESILabelExtended struct {
