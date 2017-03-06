@@ -92,17 +92,18 @@ type BgpServer struct {
 	fsmStateCh    chan *FsmMsg
 	acceptCh      chan *net.TCPConn
 
-	mgmtCh      chan *mgmtOp
-	policy      *table.RoutingPolicy
-	listeners   []*TCPListener
-	neighborMap map[string]*Peer
-	globalRib   *table.TableManager
-	roaManager  *roaManager
-	shutdown    bool
-	watcherMap  map[WatchEventType][]*Watcher
-	zclient     *zebraClient
-	bmpManager  *bmpClientManager
-	mrtManager  *mrtManager
+	mgmtCh        chan *mgmtOp
+	policy        *table.RoutingPolicy
+	listeners     []*TCPListener
+	neighborMap   map[string]*Peer
+	globalRib     *table.TableManager
+	roaManager    *roaManager
+	shutdown      bool
+	watcherMap    map[WatchEventType][]*Watcher
+	zclient       *zebraClient
+	bmpManager    *bmpClientManager
+	vpnMonManager *vpnMonManager
+	mrtManager    *mrtManager
 }
 
 func NewBgpServer() *BgpServer {
@@ -115,6 +116,7 @@ func NewBgpServer() *BgpServer {
 		watcherMap:  make(map[WatchEventType][]*Watcher),
 	}
 	s.bmpManager = newBmpClientManager(s)
+	s.vpnMonManager = newvpnMonClientManager(s)
 	s.mrtManager = newMrtManager(s)
 	return s
 }
@@ -984,6 +986,18 @@ func (s *BgpServer) StartZebraClient(c *config.ZebraConfig) error {
 		s.zclient, err = newZebraClient(s, c.Url, protos, c.Version)
 		return err
 	}, false)
+}
+
+func (s *BgpServer) AddVPNMon(c *config.VPNMonServerConfig) error {
+	return s.mgmtOperation(func() error {
+		return s.vpnMonManager.addServer(c)
+	}, true)
+}
+
+func (s *BgpServer) DelVPNMon(c *config.VPNMonServerConfig) error {
+	return s.mgmtOperation(func() error {
+		return s.vpnMonManager.deleteServer(c)
+	}, true)
 }
 
 func (s *BgpServer) AddBmp(c *config.BmpServerConfig) error {

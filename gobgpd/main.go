@@ -16,6 +16,14 @@
 package main
 
 import (
+	"io/ioutil"
+	"net/http"
+	_ "net/http/pprof"
+	"os"
+	"os/signal"
+	"runtime"
+	"syscall"
+
 	log "github.com/Sirupsen/logrus"
 	"github.com/jessevdk/go-flags"
 	p "github.com/kr/pretty"
@@ -24,13 +32,6 @@ import (
 	"github.com/osrg/gobgp/packet/bgp"
 	"github.com/osrg/gobgp/server"
 	"github.com/osrg/gobgp/table"
-	"io/ioutil"
-	"net/http"
-	_ "net/http/pprof"
-	"os"
-	"os/signal"
-	"runtime"
-	"syscall"
 )
 
 func main() {
@@ -160,6 +161,11 @@ func main() {
 				for _, c := range newConfig.BmpServers {
 					if err := bgpServer.AddBmp(&c.Config); err != nil {
 						log.Fatalf("failed to set bmp config: %s", err)
+					}
+				}
+				for _, c := range newConfig.VPNMonServers {
+					if err := bgpServer.AddVPNMon(&c.Config); err != nil {
+						log.Fatalf("failed to set vpn mon config: %s", err)
 					}
 				}
 				for _, c := range newConfig.MrtDump {

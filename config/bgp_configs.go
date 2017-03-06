@@ -1149,6 +1149,14 @@ type BmpServerConfig struct {
 	RouteMonitoringPolicy BmpRouteMonitoringPolicyType `mapstructure:"route-monitoring-policy" json:"route-monitoring-policy,omitempty"`
 }
 
+type VPNMonServerConfig struct {
+	// original -> gobgp:address
+	//gobgp:address's original type is inet:ip-address
+	Address string `mapstructure:"address" json:"address,omitempty"`
+	// original -> gobgp:port
+	Port uint32 `mapstructure:"port" json:"port,omitempty"`
+}
+
 func (lhs *BmpServerConfig) Equal(rhs *BmpServerConfig) bool {
 	if lhs == nil || rhs == nil {
 		return false
@@ -1163,6 +1171,13 @@ func (lhs *BmpServerConfig) Equal(rhs *BmpServerConfig) bool {
 		return false
 	}
 	return true
+}
+
+//struct for container gobgp:vpnmon-server
+type VPNMonServer struct {
+	// original -> gobgp:address
+	// original -> gobgp:vpn-mon-config
+	Config VPNMonServerConfig `mapstructure:"config" json:"config,omitempty"`
 }
 
 //struct for container gobgp:bmp-server
