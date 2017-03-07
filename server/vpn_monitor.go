@@ -16,6 +16,7 @@
 package server
 
 import (
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -28,12 +29,44 @@ import (
 	"github.com/osrg/gobgp/table"
 )
 
+type VpnRouteMsgHeader struct {
+	Length uint32
+}
+
+const (
+	VPN_ROUTE_MSG_HEADER_SIZE = 4
+)
+
+func (hdr *VpnRouteMsgHeader) DecodeFromBytes(data []byte) {
+	hdr.Length = binary.BigEndian.Uint32(data[0:4])
+}
+
+func (hdr *VpnRouteMsgHeader) Serialize() ([]byte, error) {
+	buf := make([]byte, VPN_ROUTE_MSG_HEADER_SIZE)
+	binary.BigEndian.PutUint32(buf[0:4], hdr.Length)
+	return buf, nil
+}
+
 type VpnRouteMsg struct {
 	RD      string
 	Nexthop string
 	Prefix  string
 	Length  uint8
 	Isdraw  bool
+}
+
+func SplitVpnRouteMsg(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 || len(data) < VPN_ROUTE_MSG_HEADER_SIZE {
+		return 0, nil, nil
+	}
+
+	hdr := &VpnRouteMsgHeader{}
+	hdr.DecodeFromBytes(data)
+	if uint32(len(data)) < hdr.Length {
+		return 0, nil, nil
+	}
+
+	return int(hdr.Length), data[0:hdr.Length], nil
 }
 
 func (b *vpnMonClient) tryConnect() *net.TCPConn {
@@ -75,11 +108,17 @@ func (b *vpnMonClient) loop() {
 			defer w.Stop()
 
 			write := func(msgs []VpnRouteMsg) error {
-				buf, err := json.Marshal(msgs)
+				var hdr VpnRouteMsgHeader
+				jsonbuf, err := json.Marshal(msgs)
 				if err != nil {
 					log.Warn("failed to marshal VpnRouteMsg")
 					return err
 				}
+
+				hdr.Length = uint32(len(jsonbuf))
+				buf, _ := hdr.Serialize()
+				buf = append(buf, jsonbuf...)
+
 				_, err = conn.Write(buf)
 				if err != nil {
 					log.Warnf("failed to write to bmp server %s", b.host)
