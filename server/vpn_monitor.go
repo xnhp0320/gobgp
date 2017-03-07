@@ -103,7 +103,7 @@ func (b *vpnMonClient) loop() {
 		}
 
 		if func() bool {
-			ops := []WatchOption{}
+			ops := []WatchOption{WatchUpdate(true)}
 			w := b.s.Watch(ops...)
 			defer w.Stop()
 
