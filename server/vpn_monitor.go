@@ -193,11 +193,10 @@ func (b *vpnMonClient) loop() {
 						}
 						vpnmsg, push := handle(pathList)
 						if push {
-							write(vpnmsg)
+							if err := write(vpnmsg); err != nil {
+								return false
+							}
 						}
-						return false
-					case *WatchEventPeerState:
-						return false
 					}
 				case <-b.dead:
 					conn.Close()
