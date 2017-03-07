@@ -161,16 +161,15 @@ func (b *vpnMonClient) loop() {
 							}
 						} else if attr.GetType() == bgp.BGP_ATTR_TYPE_MP_UNREACH_NLRI {
 							push = true
-							MpReachNLRI := attr.(*bgp.PathAttributeMpReachNLRI)
-							for _, addrprefix := range MpReachNLRI.Value {
+							NLRI := attr.(*bgp.PathAttributeMpUnreachNLRI)
+							for _, addrprefix := range NLRI.Value {
 								labledAddrprefix := addrprefix.(*bgp.LabeledVPNIPAddrPrefix)
 								diff := uint8(8 * (labledAddrprefix.Labels.Len() + labledAddrprefix.RD.Len()))
 								msg := VpnRouteMsg{
-									RD:      labledAddrprefix.RD.String(),
-									Nexthop: MpReachNLRI.Nexthop.String(),
-									Prefix:  labledAddrprefix.Prefix.String(),
-									Length:  labledAddrprefix.IPAddrPrefixDefault.Length - diff,
-									Isdraw:  true,
+									RD:     labledAddrprefix.RD.String(),
+									Prefix: labledAddrprefix.Prefix.String(),
+									Length: labledAddrprefix.IPAddrPrefixDefault.Length - diff,
+									Isdraw: true,
 								}
 								vpnmsgs = append(vpnmsgs, msg)
 							}
