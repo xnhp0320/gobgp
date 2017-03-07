@@ -69,6 +69,18 @@ func SplitVpnRouteMsg(data []byte, atEOF bool) (advance int, token []byte, err e
 	return int(hdr.Length), data[0:hdr.Length], nil
 }
 
+func ParseVpnRouteMsg(data []byte) ([]VpnRouteMsg, error) {
+	var msgs []VpnRouteMsg
+	hdr := &VpnRouteMsgHeader{}
+	hdr.DecodeFromBytes(data)
+	data = data[VPN_ROUTE_MSG_HEADER_SIZE:hdr.Length]
+	err := json.Unmarshal(data, &msgs)
+	if err != nil {
+		return nil, err
+	}
+	return msgs, nil
+}
+
 func (b *vpnMonClient) tryConnect() *net.TCPConn {
 	interval := 1
 	for {
@@ -115,7 +127,7 @@ func (b *vpnMonClient) loop() {
 					return err
 				}
 
-				hdr.Length = uint32(len(jsonbuf))
+				hdr.Length = uint32(len(jsonbuf)) + VPN_ROUTE_MSG_HEADER_SIZE
 				buf, _ := hdr.Serialize()
 				buf = append(buf, jsonbuf...)
 
