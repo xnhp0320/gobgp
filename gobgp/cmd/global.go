@@ -446,11 +446,32 @@ func ParseEvpnMulticastArgs(args []string) (bgp.AddrPrefixInterface, []string, e
 
 }
 
+func evpnIPPrefixExtComms(m map[string][]string) ([]string, error) {
+	if len(m["rt"]) < 1 {
+		return nil, fmt.Errorf("specify rt")
+	}
+	if len(m["encap"]) < 1 {
+		return nil, fmt.Errorf("specify encap: vxlan")
+	}
+	if len(m["router-mac"]) < 1 {
+		return nil, fmt.Errorf("specifiy router-mac")
+	}
+
+	extcomms := make([]string, 6)
+	extcomms[0] = "rt"
+	extcomms[1] = m["rt"][0]
+	extcomms[2] = "encap"
+	extcomms[3] = m["encap"][0]
+	extcomms[4] = "router-mac"
+	extcomms[5] = m["router-mac"][0]
+	return extcomms, nil
+}
+
 func ParseEVPNIPPrefixArgs(args []string) (bgp.AddrPrefixInterface, []string, error) {
 	if len(args) < 6 {
 		return nil, nil, fmt.Errorf("lack of number of args needs 6 at least but got %d", len(args))
 	}
-	m := extractReserved(args, []string{"gw", "rd", "rt", "encap", "etag", "label"})
+	m := extractReserved(args, []string{"gw", "rd", "rt", "encap", "etag", "label", "router-mac"})
 	if len(m[""]) < 1 {
 		return nil, nil, fmt.Errorf("specify prefix")
 	}
@@ -490,6 +511,11 @@ func ParseEVPNIPPrefixArgs(args []string) (bgp.AddrPrefixInterface, []string, er
 		label = uint32(e)
 	}
 
+	extcomms, err := evpnIPPrefixExtComms(m)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	r := &bgp.EVPNIPPrefixRoute{
 		RD:             rd,
 		ETag:           etag,
@@ -498,7 +524,7 @@ func ParseEVPNIPPrefixArgs(args []string) (bgp.AddrPrefixInterface, []string, er
 		GWIPAddress:    gw,
 		Label:          label,
 	}
-	return bgp.NewEVPNNLRI(bgp.EVPN_IP_PREFIX, 0, r), nil, nil
+	return bgp.NewEVPNNLRI(bgp.EVPN_IP_PREFIX, 0, r), extcomms, nil
 }
 
 func ParseEvpnArgs(args []string) (bgp.AddrPrefixInterface, []string, error) {
