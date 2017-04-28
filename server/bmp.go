@@ -113,10 +113,12 @@ func (b *bmpClient) loop() {
 
 		if func() bool {
 			ops := []WatchOption{WatchPeerState(true)}
-			if b.typ != config.BMP_ROUTE_MONITORING_POLICY_TYPE_POST_POLICY {
+			if b.typ == config.BMP_ROUTE_MONITORING_POLICY_TYPE_PRE_POLICY || b.typ == config.BMP_ROUTE_MONITORING_POLICY_TYPE_BOTH {
 				ops = append(ops, WatchUpdate(true))
-			} else if b.typ != config.BMP_ROUTE_MONITORING_POLICY_TYPE_PRE_POLICY {
+			} else if b.typ == config.BMP_ROUTE_MONITORING_POLICY_TYPE_POST_POLICY || b.typ == config.BMP_ROUTE_MONITORING_POLICY_TYPE_BOTH {
 				ops = append(ops, WatchPostUpdate(true))
+			} else if b.typ == config.BMP_ROUTE_MONITORING_POLICY_TYPE_LOCAL_RIB {
+				ops = append(ops, WatchBestPath(true))
 			}
 			w := b.s.Watch(ops...)
 			defer w.Stop()
@@ -162,6 +164,15 @@ func (b *bmpClient) loop() {
 								return false
 							}
 						}
+					case *WatchEventBestPath:
+						for _, p := range msg.PathList {
+							u := table.CreateUpdateMsgFromPaths([]*table.Path{p})[0]
+							if payload, err := u.Serialize(); err != nil {
+								return false
+							} else if err = write(bmpPeerRoute(bmp.BMP_PEER_TYPE_LOCAL_RIB, false, 0, p.GetSource(), p.GetTimestamp().Unix(), payload)); err != nil {
+								return false
+							}
+						}
 					case *WatchEventPeerState:
 						info := &table.PeerInfo{
 							Address: msg.PeerAddress,
@@ -198,17 +209,29 @@ type bmpClient struct {
 }
 
 func bmpPeerUp(laddr string, lport, rport uint16, sent, recv *bgp.BGPMessage, t uint8, policy bool, pd uint64, peeri *table.PeerInfo, timestamp int64) *bmp.BMPMessage {
-	ph := bmp.NewBMPPeerHeader(t, policy, pd, peeri.Address.String(), peeri.AS, peeri.ID.String(), float64(timestamp))
+	var flags uint8 = 0
+	if policy {
+		flags |= bmp.BMP_PEER_FLAG_POST_POLICY
+	}
+	ph := bmp.NewBMPPeerHeader(t, flags, pd, peeri.Address.String(), peeri.AS, peeri.ID.String(), float64(timestamp))
 	return bmp.NewBMPPeerUpNotification(*ph, laddr, lport, rport, sent, recv)
 }
 
 func bmpPeerDown(reason uint8, t uint8, policy bool, pd uint64, peeri *table.PeerInfo, timestamp int64) *bmp.BMPMessage {
-	ph := bmp.NewBMPPeerHeader(t, policy, pd, peeri.Address.String(), peeri.AS, peeri.ID.String(), float64(timestamp))
+	var flags uint8 = 0
+	if policy {
+		flags |= bmp.BMP_PEER_FLAG_POST_POLICY
+	}
+	ph := bmp.NewBMPPeerHeader(t, flags, pd, peeri.Address.String(), peeri.AS, peeri.ID.String(), float64(timestamp))
 	return bmp.NewBMPPeerDownNotification(*ph, reason, nil, []byte{})
 }
 
 func bmpPeerRoute(t uint8, policy bool, pd uint64, peeri *table.PeerInfo, timestamp int64, payload []byte) *bmp.BMPMessage {
-	ph := bmp.NewBMPPeerHeader(t, policy, pd, peeri.Address.String(), peeri.AS, peeri.ID.String(), float64(timestamp))
+	var flags uint8 = 0
+	if policy {
+		flags |= bmp.BMP_PEER_FLAG_POST_POLICY
+	}
+	ph := bmp.NewBMPPeerHeader(t, flags, pd, peeri.Address.String(), peeri.AS, peeri.ID.String(), float64(timestamp))
 	m := bmp.NewBMPRouteMonitoring(*ph, nil)
 	body := m.Body.(*bmp.BMPRouteMonitoring)
 	body.BGPUpdatePayload = payload

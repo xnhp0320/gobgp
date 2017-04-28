@@ -288,7 +288,7 @@ func sendFsmOutgoingMsg(peer *Peer, paths []*table.Path, notification *bgp.BGPMe
 
 func isASLoop(peer *Peer, path *table.Path) bool {
 	for _, as := range path.GetAsList() {
-		if as == peer.fsm.pConf.Config.PeerAs {
+		if as == peer.fsm.pConf.State.PeerAs {
 			return true
 		}
 	}
@@ -329,7 +329,7 @@ func filterpath(peer *Peer, path, old *table.Path) *table.Path {
 			ignore = true
 			info := path.GetSource()
 			//if the path comes from eBGP peer
-			if info.AS != peer.fsm.pConf.Config.PeerAs {
+			if info.AS != peer.fsm.pConf.State.PeerAs {
 				ignore = false
 			}
 			// RFC4456 8. Avoiding Routing Information Loops
@@ -367,7 +367,7 @@ func filterpath(peer *Peer, path, old *table.Path) *table.Path {
 		}
 
 		if ignore {
-			if path.IsWithdraw == false && old != nil {
+			if !path.IsWithdraw && old != nil && old.GetSource().Address.String() != peer.ID() {
 				// we advertise a route from ebgp,
 				// which is the old best. We got the
 				// new best from ibgp. We don't
@@ -400,7 +400,7 @@ func filterpath(peer *Peer, path, old *table.Path) *table.Path {
 			// the withdrawal path.
 			// Thing is same when peer A and we advertized prefix P (as local
 			// route), then, we withdraws the prefix.
-			if path.IsWithdraw == false && old != nil {
+			if !path.IsWithdraw && old != nil && old.GetSource().Address.String() != peer.ID() {
 				return old.Clone(true)
 			}
 		}
@@ -509,18 +509,19 @@ func createWatchEventPeerState(peer *Peer) *WatchEventPeerState {
 	sentOpen := buildopen(peer.fsm.gConf, peer.fsm.pConf)
 	recvOpen := peer.fsm.recvOpen
 	return &WatchEventPeerState{
-		PeerAS:       peer.fsm.peerInfo.AS,
-		LocalAS:      peer.fsm.peerInfo.LocalAS,
-		PeerAddress:  peer.fsm.peerInfo.Address,
-		LocalAddress: net.ParseIP(laddr),
-		PeerPort:     rport,
-		LocalPort:    lport,
-		PeerID:       peer.fsm.peerInfo.ID,
-		SentOpen:     sentOpen,
-		RecvOpen:     recvOpen,
-		State:        peer.fsm.state,
-		AdminState:   peer.fsm.adminState,
-		Timestamp:    time.Now(),
+		PeerAS:        peer.fsm.peerInfo.AS,
+		LocalAS:       peer.fsm.peerInfo.LocalAS,
+		PeerAddress:   peer.fsm.peerInfo.Address,
+		LocalAddress:  net.ParseIP(laddr),
+		PeerPort:      rport,
+		LocalPort:     lport,
+		PeerID:        peer.fsm.peerInfo.ID,
+		SentOpen:      sentOpen,
+		RecvOpen:      recvOpen,
+		State:         peer.fsm.state,
+		AdminState:    peer.fsm.adminState,
+		Timestamp:     time.Now(),
+		PeerInterface: peer.fsm.pConf.Config.NeighborInterface,
 	}
 }
 
@@ -687,6 +688,10 @@ func (server *BgpServer) handleFSMMessage(peer *Peer, e *FsmMsg) {
 			peer.prefixLimitWarned = make(map[bgp.RouteFamily]bool)
 			peer.DropAll(drop)
 			server.dropPeerAllRoutes(peer, drop)
+			if peer.fsm.pConf.Config.PeerAs == 0 {
+				peer.fsm.pConf.State.PeerAs = 0
+				peer.fsm.peerInfo.AS = 0
+			}
 		} else if peer.fsm.pConf.GracefulRestart.State.PeerRestarting && nextState == bgp.BGP_FSM_IDLE {
 			if peer.fsm.pConf.GracefulRestart.State.LongLivedEnabled {
 				llgr, no_llgr := peer.llgrFamilies()
@@ -759,8 +764,11 @@ func (server *BgpServer) handleFSMMessage(peer *Peer, e *FsmMsg) {
 		if nextState == bgp.BGP_FSM_ESTABLISHED {
 			// update for export policy
 			laddr, _ := peer.fsm.LocalHostPort()
+			// may include zone info
 			peer.fsm.pConf.Transport.State.LocalAddress = laddr
-			peer.fsm.peerInfo.LocalAddress = net.ParseIP(laddr)
+			// exclude zone info
+			ipaddr, _ := net.ResolveIPAddr("ip", laddr)
+			peer.fsm.peerInfo.LocalAddress = ipaddr.IP
 			deferralExpiredFunc := func(family bgp.RouteFamily) func() {
 				return func() {
 					server.mgmtOperation(func() error {
@@ -832,6 +840,9 @@ func (server *BgpServer) handleFSMMessage(peer *Peer, e *FsmMsg) {
 		peer.startFSMHandler(server.fsmincomingCh, server.fsmStateCh)
 		server.broadcastPeerState(peer, oldState)
 	case FSM_MSG_ROUTE_REFRESH:
+		if peer.fsm.state != bgp.BGP_FSM_ESTABLISHED || e.timestamp.Unix() < peer.fsm.pConf.Timers.State.Uptime {
+			return
+		}
 		if paths := peer.handleRouteRefresh(e); len(paths) > 0 {
 			sendFsmOutgoingMsg(peer, paths, nil, false)
 			return
@@ -842,6 +853,9 @@ func (server *BgpServer) handleFSMMessage(peer *Peer, e *FsmMsg) {
 			sendFsmOutgoingMsg(peer, nil, bgp.NewBGPNotificationMessage(m.TypeCode, m.SubTypeCode, m.Data), false)
 			return
 		case *bgp.BGPMessage:
+			if peer.fsm.state != bgp.BGP_FSM_ESTABLISHED || e.timestamp.Unix() < peer.fsm.pConf.Timers.State.Uptime {
+				return
+			}
 			server.roaManager.validate(e.PathList)
 			pathList, eor, notification := peer.handleUpdate(e)
 			if notification != nil {
@@ -1534,10 +1548,13 @@ func (s *BgpServer) GetServer() (c *config.Global) {
 	return c
 }
 
-func (s *BgpServer) GetNeighbor(getAdvertised bool) (l []*config.Neighbor) {
+func (s *BgpServer) GetNeighbor(address string, getAdvertised bool) (l []*config.Neighbor) {
 	s.mgmtOperation(func() error {
 		l = make([]*config.Neighbor, 0, len(s.neighborMap))
-		for _, peer := range s.neighborMap {
+		for k, peer := range s.neighborMap {
+			if address != "" && address != k {
+				continue
+			}
 			l = append(l, peer.ToConfig(getAdvertised))
 		}
 		return nil
@@ -2111,18 +2128,19 @@ type WatchEventUpdate struct {
 }
 
 type WatchEventPeerState struct {
-	PeerAS       uint32
-	LocalAS      uint32
-	PeerAddress  net.IP
-	LocalAddress net.IP
-	PeerPort     uint16
-	LocalPort    uint16
-	PeerID       net.IP
-	SentOpen     *bgp.BGPMessage
-	RecvOpen     *bgp.BGPMessage
-	State        bgp.FSMState
-	AdminState   AdminState
-	Timestamp    time.Time
+	PeerAS        uint32
+	LocalAS       uint32
+	PeerAddress   net.IP
+	LocalAddress  net.IP
+	PeerPort      uint16
+	LocalPort     uint16
+	PeerID        net.IP
+	SentOpen      *bgp.BGPMessage
+	RecvOpen      *bgp.BGPMessage
+	State         bgp.FSMState
+	AdminState    AdminState
+	Timestamp     time.Time
+	PeerInterface string
 }
 
 type WatchEventAdjIn struct {

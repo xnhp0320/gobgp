@@ -49,8 +49,19 @@ func getNeighbors(vrf string) (neighbors, error) {
 	return neighbors(n), err
 }
 
-func getNeighbor(name string) (*config.Neighbor, error) {
-	return client.GetNeighbor(name)
+func getNeighbor(name string, enableAdvertised bool) (*config.Neighbor, error) {
+	if net.ParseIP(name) == nil {
+		name = ""
+	}
+	return client.GetNeighbor(name, enableAdvertised)
+}
+
+func getASN(p *config.Neighbor) string {
+	asn := "*"
+	if p.State.PeerAs > 0 {
+		asn = fmt.Sprint(p.State.PeerAs)
+	}
+	return asn
 }
 
 func showNeighbors(vrf string) error {
@@ -71,7 +82,7 @@ func showNeighbors(vrf string) error {
 		return nil
 	}
 	maxaddrlen := 0
-	maxaslen := 0
+	maxaslen := 2
 	maxtimelen := len("Up/Down")
 	timedelta := []string{}
 
@@ -84,8 +95,8 @@ func showNeighbors(vrf string) error {
 		} else if j := len(n.Config.NeighborAddress); j > maxaddrlen {
 			maxaddrlen = j
 		}
-		if len(fmt.Sprint(n.Config.PeerAs)) > maxaslen {
-			maxaslen = len(fmt.Sprint(n.Config.PeerAs))
+		if l := len(getASN(n)); l > maxaslen {
+			maxaslen = l
 		}
 		timeStr := "never"
 		if n.Timers.State.Uptime != 0 {
@@ -135,14 +146,14 @@ func showNeighbors(vrf string) error {
 		if n.Config.NeighborInterface != "" {
 			neigh = n.Config.NeighborInterface
 		}
-		fmt.Printf(format, neigh, fmt.Sprint(n.Config.PeerAs), timedelta[i], format_fsm(n.State.AdminState, n.State.SessionState), fmt.Sprint(n.State.AdjTable.Received), fmt.Sprint(n.State.AdjTable.Accepted))
+		fmt.Printf(format, neigh, getASN(n), timedelta[i], format_fsm(n.State.AdminState, n.State.SessionState), fmt.Sprint(n.State.AdjTable.Received), fmt.Sprint(n.State.AdjTable.Accepted))
 	}
 
 	return nil
 }
 
 func showNeighbor(args []string) error {
-	p, e := getNeighbor(args[0])
+	p, e := getNeighbor(args[0], true)
 	if e != nil {
 		return e
 	}
@@ -152,7 +163,7 @@ func showNeighbor(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("BGP neighbor is %s, remote AS %d", p.Config.NeighborAddress, p.Config.PeerAs)
+	fmt.Printf("BGP neighbor is %s, remote AS %s", p.Config.NeighborAddress, getASN(p))
 
 	if p.RouteReflector.Config.RouteReflectorClient {
 		fmt.Printf(", route-reflector-client\n")
@@ -261,7 +272,7 @@ func showNeighbor(args []string) error {
 					fmt.Printf("        Local: %s", s)
 				}
 			}
-			if m := lookup(c, p.State.LocalCapabilityList); m != nil {
+			if m := lookup(c, p.State.RemoteCapabilityList); m != nil {
 				g := m.(*bgp.CapGracefulRestart)
 				if s := grStr(g); len(s) > 0 {
 					fmt.Printf("        Remote: %s", s)
@@ -286,13 +297,43 @@ func showNeighbor(args []string) error {
 					fmt.Printf("        Local:\n%s", s)
 				}
 			}
-			if m := lookup(c, p.State.LocalCapabilityList); m != nil {
+			if m := lookup(c, p.State.RemoteCapabilityList); m != nil {
 				g := m.(*bgp.CapLongLivedGracefulRestart)
 				if s := grStr(g); len(s) > 0 {
 					fmt.Printf("        Remote:\n%s", s)
 				}
 			}
-
+		case bgp.BGP_CAP_EXTENDED_NEXTHOP:
+			fmt.Printf("    %s:\t%s\n", c.Code(), support)
+			exnhStr := func(e *bgp.CapExtendedNexthop) string {
+				lines := make([]string, 0, len(e.Tuples))
+				for _, t := range e.Tuples {
+					var nhafi string
+					switch int(t.NexthopAFI) {
+					case bgp.AFI_IP:
+						nhafi = "ipv4"
+					case bgp.AFI_IP6:
+						nhafi = "ipv6"
+					default:
+						nhafi = fmt.Sprintf("%d", t.NexthopAFI)
+					}
+					line := fmt.Sprintf("nlri: %s, nexthop: %s", bgp.AfiSafiToRouteFamily(t.NLRIAFI, uint8(t.NLRISAFI)), nhafi)
+					lines = append(lines, line)
+				}
+				return strings.Join(lines, "\n")
+			}
+			if m := lookup(c, p.State.LocalCapabilityList); m != nil {
+				e := m.(*bgp.CapExtendedNexthop)
+				if s := exnhStr(e); len(s) > 0 {
+					fmt.Printf("        Local:  %s\n", s)
+				}
+			}
+			if m := lookup(c, p.State.RemoteCapabilityList); m != nil {
+				e := m.(*bgp.CapExtendedNexthop)
+				if s := exnhStr(e); len(s) > 0 {
+					fmt.Printf("        Remote: %s\n", s)
+				}
+			}
 		default:
 			fmt.Printf("    %s:\t%s\n", c.Code(), support)
 		}
@@ -303,7 +344,7 @@ func showNeighbor(args []string) error {
 	fmt.Printf("    Notifications: %10d %10d\n", p.State.Messages.Sent.Notification, p.State.Messages.Received.Notification)
 	fmt.Printf("    Updates:       %10d %10d\n", p.State.Messages.Sent.Update, p.State.Messages.Received.Update)
 	fmt.Printf("    Keepalives:    %10d %10d\n", p.State.Messages.Sent.Keepalive, p.State.Messages.Received.Keepalive)
-	fmt.Printf("    Route Refesh:  %10d %10d\n", p.State.Messages.Sent.Refresh, p.State.Messages.Received.Refresh)
+	fmt.Printf("    Route Refresh: %10d %10d\n", p.State.Messages.Sent.Refresh, p.State.Messages.Received.Refresh)
 	fmt.Printf("    Discarded:     %10d %10d\n", p.State.Messages.Sent.Discarded, p.State.Messages.Received.Discarded)
 	fmt.Printf("    Total:         %10d %10d\n", p.State.Messages.Sent.Total, p.State.Messages.Received.Total)
 	fmt.Print("  Route statistics:\n")
@@ -580,7 +621,7 @@ func showNeighborRib(r string, name string, args []string) error {
 	switch r {
 	case CMD_LOCAL, CMD_ADJ_IN, CMD_ACCEPTED, CMD_REJECTED, CMD_ADJ_OUT:
 		if rib.Info("").NumDestination == 0 {
-			peer, err := getNeighbor(name)
+			peer, err := getNeighbor(name, false)
 			if err != nil {
 				return err
 			}
@@ -819,13 +860,15 @@ func modNeighbor(cmdType string, args []string) error {
 	var err error
 	switch cmdType {
 	case CMD_ADD:
-		if len(m["as"]) != 1 {
+		if len(m[""]) > 0 && len(m["as"]) != 1 {
 			return fmt.Errorf("%s", usage)
 		}
 		var as int
-		as, err = strconv.Atoi(m["as"][0])
-		if err != nil {
-			return err
+		if len(m["as"]) > 0 {
+			as, err = strconv.Atoi(m["as"][0])
+			if err != nil {
+				return err
+			}
 		}
 		err = client.AddNeighbor(getConf(as))
 	case CMD_DEL:
@@ -862,7 +905,7 @@ func NewNeighborCmd() *cobra.Command {
 						}
 					}
 					if addr == "" {
-						peer, err := getNeighbor(args[len(args)-1])
+						peer, err := getNeighbor(args[len(args)-1], false)
 						if err != nil {
 							exitWithError(err)
 						}
@@ -893,7 +936,7 @@ func NewNeighborCmd() *cobra.Command {
 	policyCmd := &cobra.Command{
 		Use: CMD_POLICY,
 		Run: func(cmd *cobra.Command, args []string) {
-			peer, err := getNeighbor(args[0])
+			peer, err := getNeighbor(args[0], false)
 			if err != nil {
 				exitWithError(err)
 			}
@@ -910,7 +953,7 @@ func NewNeighborCmd() *cobra.Command {
 		cmd := &cobra.Command{
 			Use: v,
 			Run: func(cmd *cobra.Command, args []string) {
-				peer, err := getNeighbor(args[0])
+				peer, err := getNeighbor(args[0], false)
 				if err != nil {
 					exitWithError(err)
 				}
@@ -926,7 +969,7 @@ func NewNeighborCmd() *cobra.Command {
 			subcmd := &cobra.Command{
 				Use: w,
 				Run: func(subcmd *cobra.Command, args []string) {
-					peer, err := getNeighbor(args[len(args)-1])
+					peer, err := getNeighbor(args[len(args)-1], false)
 					if err != nil {
 						exitWithError(err)
 					}
